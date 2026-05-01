@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Speed Breaker Detection — OPS Dashboard</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+
+<style>
+  :root{
+    --bg0:#0b0d11; --bg1:#13161c; --bg2:#1a1e27; --bg3:#222733;
+    --border:#2a2f3d; --border2:#363d52;
+    --amber:#f5a623; --amber2:#ffc453; --amber-dim:#7a5110;
+    --green:#22c55e; --green-dim:#14532d;
+    --red:#ef4444; --red-dim:#7f1d1d;
+    --blue:#3b82f6; --blue-dim:#1e3a5f;
+    --text:#e8eaf0; --text2:#9aa0b5; --text3:#5a6075;
+    --mono:'Space Mono',monospace;
+    --sans:'DM Sans',sans-serif;
+    --scan-radius:calc(var(--scan-px,0) * 1px);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;background:var(--bg0);color:var(--text);font-family:var(--sans)}
+
+  /* ── Layout ─────────────────── */
+  #app{display:grid;height:100vh;grid-template-columns:340px 1fr;grid-template-rows:56px 1fr;overflow:hidden}
+  #topbar{grid-column:1/-1;background:var(--bg1);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 20px;gap:16px;z-index:100}
+  #sidebar{background:var(--bg1);border-right:1px solid var(--border);overflow-y:auto;display:flex;flex-direction:column;gap:0}
+  #map-wrap{position:relative;background:var(--bg0)}
+  #map{height:100%;width:100%}
+
+  /* ── Topbar ─────────────────── */
+  .logo{font-family:var(--mono);font-size:13px;font-weight:700;color:var(--amber);letter-spacing:.08em;text-transform:uppercase}
+  .logo span{color:var(--text2);font-weight:400}
+  .badge{font-family:var(--mono);font-size:10px;padding:3px 8px;border-radius:3px;text-transform:uppercase;letter-spacing:.06em}
+  .badge.sim{background:var(--blue-dim);color:var(--blue);border:1px solid var(--blue)}
+  .badge.live{background:var(--green-dim);color:var(--green);border:1px solid var(--green)}
+  .badge.alert{background:var(--amber-dim);color:var(--amber);border:1px solid var(--amber);animation:pulse 1s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+  .topbar-time{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--text3)}
+  #reset-btn{margin-left:8px;font-family:var(--mono);font-size:10px;padding:4px 10px;background:transparent;color:var(--text3);border:1px solid var(--border2);border-radius:3px;cursor:pointer;letter-spacing:.04em}
+  #reset-btn:hover{color:var(--text);border-color:var(--text2)}
+
+  /* ── Panel sections ─────────── */
+  .panel{border-bottom:1px solid var(--border);padding:14px 16px}
+  .panel-title{font-family:var(--mono);font-size:10px;color:var(--text3);letter-spacing:.1em;text-transform:uppercase;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+  .panel-title::before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--amber)}
+
+  /* ── Stat grid ──────────────── */
+  .stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .stat{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px 10px}
+  .stat-label{font-family:var(--mono);font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px}
+  .stat-val{font-family:var(--mono);font-size:18px;font-weight:700;color:var(--amber);line-height:1}
+  .stat-unit{font-size:10px;color:var(--text3);margin-left:2px}
+  .stat.danger .stat-val{color:var(--red);animation:pulse 1s ease-in-out infinite}
+  .stat.ok .stat-val{color:var(--green)}
+  .stat.wide{grid-column:1/-1}
+
+  /* ── Feedback panel ─────────── */
+  #feedback-panel{background:var(--bg0);border:1px solid var(--amber);border-radius:8px;margin:0 16px 12px;padding:14px;display:none}
+  #feedback-panel.visible{display:block}
+  .fb-question{font-size:12px;color:var(--text2);margin-bottom:6px;line-height:1.5}
+  .fb-location{font-family:var(--mono);font-size:10px;color:var(--amber);margin-bottom:10px}
+  .fb-conf{font-family:var(--mono);font-size:10px;color:var(--text3);margin-bottom:12px}
+  .fb-conf-bar{height:4px;background:var(--bg3);border-radius:2px;margin-bottom:12px;overflow:hidden}
+  .fb-conf-fill{height:100%;border-radius:2px;background:var(--amber);transition:width .4s}
+  .fb-btns{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .fb-yes{background:var(--green-dim);border:1px solid var(--green);color:var(--green);font-family:var(--mono);font-size:11px;padding:9px;border-radius:5px;cursor:pointer;text-transform:uppercase;letter-spacing:.06em;transition:all .15s}
+  .fb-no{background:var(--red-dim);border:1px solid var(--red);color:var(--red);font-family:var(--mono);font-size:11px;padding:9px;border-radius:5px;cursor:pointer;text-transform:uppercase;letter-spacing:.06em;transition:all .15s}
+  .fb-yes:hover{background:var(--green);color:#fff}
+  .fb-no:hover{background:var(--red);color:#fff}
+  .fb-timer{font-family:var(--mono);font-size:10px;color:var(--text3);text-align:center;margin-top:8px}
+  #fb-countdown{color:var(--amber)}
+
+  /* ── Breaker table ──────────── */
+  .breaker-table{width:100%;border-collapse:collapse;font-size:11px}
+  .breaker-table th{font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);padding:4px 6px;text-align:left;border-bottom:1px solid var(--border)}
+  .breaker-table td{padding:5px 6px;border-bottom:1px solid var(--border);color:var(--text2);font-family:var(--mono)}
+  .breaker-table tr:hover td{background:var(--bg2)}
+  .status-pill{display:inline-block;padding:2px 6px;border-radius:3px;font-size:9px;text-transform:uppercase;letter-spacing:.05em;font-weight:700}
+  .status-confirmed{background:var(--green-dim);color:var(--green)}
+  .status-candidate{background:var(--amber-dim);color:var(--amber)}
+  .status-rejected{background:var(--red-dim);color:var(--red)}
+  .conf-bar-wrap{width:48px;height:4px;background:var(--bg3);border-radius:2px;display:inline-block;vertical-align:middle}
+  .conf-bar-fill{height:100%;border-radius:2px;transition:width .4s}
+  .action-btn{font-family:var(--mono);font-size:9px;padding:2px 6px;border-radius:3px;cursor:pointer;border:1px solid;background:transparent;letter-spacing:.04em;margin-right:2px}
+  .action-btn.confirm{border-color:var(--green);color:var(--green)}
+  .action-btn.reject{border-color:var(--red);color:var(--red)}
+  .action-btn:hover{opacity:.7}
+
+  /* ── Event log ──────────────── */
+  .log-item{font-family:var(--mono);font-size:10px;color:var(--text2);padding:4px 0;border-bottom:1px solid var(--border);display:flex;gap:8px}
+  .log-time{color:var(--text3);min-width:56px}
+  .log-msg{color:var(--text)}
+
+  /* ── Map overlays ───────────── */
+  #alert-overlay{position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:500;display:none;background:rgba(11,13,17,.92);border:1px solid var(--amber);border-radius:8px;padding:10px 20px;font-family:var(--mono);font-size:12px;color:var(--amber);text-align:center;letter-spacing:.05em;pointer-events:none}
+  #alert-overlay.visible{display:block;animation:pulse 1s ease-in-out infinite}
+  #camera-indicator{position:absolute;top:12px;right:12px;z-index:500;display:none;background:rgba(11,13,17,.92);border:1px solid var(--green);border-radius:6px;padding:6px 12px;font-family:var(--mono);font-size:10px;color:var(--green)}
+  #camera-indicator.on{display:flex;align-items:center;gap:6px}
+  .cam-dot{width:8px;height:8px;border-radius:50%;background:var(--green);animation:pulse .8s ease-in-out infinite}
+
+  /* ── Speed gauge ─────────────── */
+  #speed-gauge{position:absolute;bottom:20px;right:16px;z-index:500;background:rgba(11,13,17,.9);border:1px solid var(--border2);border-radius:8px;padding:10px 14px;text-align:center}
+  #gauge-val{font-family:var(--mono);font-size:28px;font-weight:700;color:var(--amber);line-height:1}
+  #gauge-label{font-family:var(--mono);font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.1em}
+  #gauge-drop{font-family:var(--mono);font-size:9px;margin-top:2px;color:var(--red)}
+
+  /* Leaflet custom markers */
+  .vehicle-icon{width:28px;height:28px;border-radius:50%;background:var(--blue);border:2px solid #fff;display:flex;align-items:center;justify-content:center;font-size:14px;box-shadow:0 0 0 4px rgba(59,130,246,.3)}
+  .confirmed-icon{width:24px;height:24px;border-radius:4px;background:var(--green);border:2px solid #fff;display:flex;align-items:center;justify-content:center;font-size:11px;box-shadow:0 0 0 3px rgba(34,197,94,.25)}
+  .candidate-icon{width:24px;height:24px;border-radius:4px;background:var(--amber);border:2px solid #fff;display:flex;align-items:center;justify-content:center;font-size:11px;box-shadow:0 0 0 3px rgba(245,166,35,.25)}
+  .candidate-icon.pulsing{animation:pulse .9s ease-in-out infinite}
+  .leaflet-popup-content-wrapper{background:var(--bg1);color:var(--text);border:1px solid var(--border2);border-radius:8px;font-family:var(--mono);font-size:11px}
+  .leaflet-popup-tip{background:var(--bg1)}
+  .popup-title{font-size:12px;font-weight:700;color:var(--amber);margin-bottom:4px}
+  .popup-row{color:var(--text2);margin:2px 0}
+
+  /* scrollbar */
+  ::-webkit-scrollbar{width:4px}
+  ::-webkit-scrollbar-track{background:var(--bg1)}
+  ::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+</style>
+</head>
+
+<body>
+<div id="app">
+
+  <!-- TOP BAR -->
+  <div id="topbar">
+    <div class="logo">SBD<span>/OPS</span></div>
+    <div class="badge sim" id="mode-badge">SIMULATION</div>
+    <div class="badge" id="alert-badge" style="display:none">⚠ BREAKER AHEAD</div>
+    <div class="topbar-time" id="clock">--:--:--</div>
+    <button id="reset-btn" onclick="resetDB()">RESET DB</button>
+  </div>
+
+  <!-- SIDEBAR -->
+  <div id="sidebar">
+
+    <!-- Status stats -->
+    <div class="panel">
+      <div class="panel-title">Vehicle Status</div>
+      <div class="stat-grid">
+        <div class="stat" id="stat-speed"><div class="stat-label">Speed</div><div class="stat-val" id="sv-speed">0<span class="stat-unit">km/h</span></div></div>
+        <div class="stat" id="stat-dist"><div class="stat-label">Nearest</div><div class="stat-val" id="sv-dist">—<span class="stat-unit">m</span></div></div>
+        <div class="stat wide"><div class="stat-label">Position</div><div class="stat-val" style="font-size:12px" id="sv-pos">—</div></div>
+        <div class="stat wide"><div class="stat-label">Drop Window Max</div><div class="stat-val" id="sv-max" style="font-size:14px">0<span class="stat-unit">km/h</span></div></div>
+      </div>
+    </div>
+
+    <!-- Feedback panel -->
+    <div class="panel" style="padding-bottom:0">
+      <div class="panel-title">Field Validation</div>
+      <div id="feedback-panel">
+        <div class="fb-question">⚠ Speed breaker candidate detected</div>
+        <div class="fb-location" id="fb-loc">—</div>
+        <div class="fb-conf" id="fb-conf">Confidence: —</div>
+        <div class="fb-conf-bar"><div class="fb-conf-fill" id="fb-conf-fill" style="width:0%"></div></div>
+        <div class="fb-btns">
+          <button class="fb-yes" id="fb-yes">✓ YES</button>
+          <button class="fb-no" id="fb-no">✗ NO</button>
+        </div>
+        <div class="fb-timer">Auto-dismiss in <span id="fb-countdown">15</span>s</div>
+      </div>
+    </div>
+
+    <!-- Breaker table -->
+    <div class="panel" style="flex:1;overflow-y:auto">
+      <div class="panel-title">Breaker Registry</div>
+      <table class="breaker-table">
+        <thead>
+          <tr><th>ID</th><th>Lat</th><th>Lon</th><th>Conf</th><th>Status</th><th>Act</th></tr>
+        </thead>
+        <tbody id="breaker-tbody"></tbody>
+      </table>
+    </div>
+
+    <!-- Event log -->
+    <div class="panel" style="max-height:200px;overflow-y:auto">
+      <div class="panel-title">Event Log</div>
+      <div id="event-log"></div>
+    </div>
+
+  </div>
+
+  <!-- MAP -->
+  <div id="map-wrap">
+    <div id="map"></div>
+
+    <!-- Alert overlay -->
+    <div id="alert-overlay">🚨 SPEED BREAKER AHEAD</div>
+
+    <!-- Camera indicator -->
+    <div id="camera-indicator"><span class="cam-dot"></span>CAMERA ON</div>
+
+    <!-- Speed gauge -->
+    <div id="speed-gauge">
+      <div id="gauge-val">0</div>
+      <div id="gauge-label">km / h</div>
+      <div id="gauge-drop" style="display:none">DROP DETECTED</div>
+    </div>
+  </div>
+
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+
+const API = 'http://127.0.0.1:5050';
+
+// ── Map init ────────────────────────────────────────────────
+const map = L.map('map', {
+  center: [28.615, 77.208],
+  zoom: 15,
+  zoomControl: true,
+  attributionControl: false,
+});
+
+// Dark OpenStreetMap tile
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  attribution: '© OpenStreetMap © CARTO',
+  subdomains: 'abcd',
+  maxZoom: 20,
+}).addTo(map);
+
+L.control.attribution({ prefix: false, position: 'bottomleft' }).addTo(map);
+
+// ── Marker factories ────────────────────────────────────────
+function makeIcon(html, size = [28, 28]) {
+  return L.divIcon({ html, className: '', iconSize: size, iconAnchor: [size[0]/2, size[1]/2] });
+}
+
+// ── State ───────────────────────────────────────────────────
+let vehicleMarker = null;
+let breakerMarkers = {};        // id → L.Marker
+let scanCircles    = {};        // id → L.Circle
+let routePath      = [];        // [latLng, …]
+let routePolyline  = null;
+let lastData       = {};
+let feedbackTimer  = null;
+let feedbackCountdown = 15;
+let currentFeedbackId = null;
+let lastBreakersHash  = '';
+
+// ── Feedback UI ─────────────────────────────────────────────
+function showFeedback(pending) {
+  if (!pending) return;
+  if (currentFeedbackId === pending.breaker_id) return;
+  currentFeedbackId = pending.breaker_id;
+  feedbackCountdown = 15;
+
+  const panel = document.getElementById('feedback-panel');
+  panel.classList.add('visible');
+
+  document.getElementById('fb-loc').textContent =
+    `id #${pending.breaker_id}  ${pending.lat.toFixed(5)}, ${pending.lon.toFixed(5)}`;
+  document.getElementById('fb-conf').textContent =
+    `Confidence: ${(pending.conf * 100).toFixed(0)}%`;
+  document.getElementById('fb-conf-fill').style.width = `${pending.conf * 100}%`;
+  document.getElementById('fb-countdown').textContent = feedbackCountdown;
+
+  clearInterval(feedbackTimer);
+  feedbackTimer = setInterval(() => {
+    feedbackCountdown--;
+    const el = document.getElementById('fb-countdown');
+    if (el) el.textContent = feedbackCountdown;
+    if (feedbackCountdown <= 0) {
+      clearInterval(feedbackTimer);
+      hideFeedback();
+    }
+  }, 1000);
+}
+
+function hideFeedback() {
+  document.getElementById('feedback-panel').classList.remove('visible');
+  currentFeedbackId = null;
+  clearInterval(feedbackTimer);
+}
+
+async function sendFeedback(answer) {
+  if (!currentFeedbackId) return;
+  const id = currentFeedbackId;
+  hideFeedback();
+  try {
+    await fetch(`${API}/feedback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ breaker_id: id, answer }),
+    });
+    await refreshBreakers();
+  } catch(e) { console.error('feedback error', e); }
+}
+
+document.getElementById('fb-yes').onclick = () => sendFeedback('yes');
+document.getElementById('fb-no').onclick  = () => sendFeedback('no');
+
+// ── Breaker table rendering ──────────────────────────────────
+function confColor(c) {
+  if (c >= 0.8) return '#22c55e';
+  if (c >= 0.5) return '#f5a623';
+  return '#ef4444';
+}
+
+function renderBreakers(breakers) {
+  const hash = JSON.stringify(breakers.map(b=>[b.id,b.confidence,b.status]));
+  if (hash === lastBreakersHash) return;
+  lastBreakersHash = hash;
+
+  const tbody = document.getElementById('breaker-tbody');
+  tbody.innerHTML = '';
+  breakers.forEach(b => {
+    const tr = document.createElement('tr');
+    const conf = (b.confidence * 100).toFixed(0);
+    const statusClass = `status-${b.status}`;
+    tr.innerHTML = `
+      <td>${b.id}</td>
+      <td>${b.latitude.toFixed(5)}</td>
+      <td>${b.longitude.toFixed(5)}</td>
+      <td>
+        <div class="conf-bar-wrap"><div class="conf-bar-fill" style="width:${conf}%;background:${confColor(b.confidence)}"></div></div>
+        <span style="font-size:9px;color:${confColor(b.confidence)};margin-left:4px">${conf}%</span>
+      </td>
+      <td><span class="status-pill ${statusClass}">${b.status}</span></td>
+      <td>
+        ${b.status !== 'confirmed' ? `<button class="action-btn confirm" onclick="sendAction(${b.id},'confirm')">✓</button>` : ''}
+        ${b.status !== 'rejected'  ? `<button class="action-btn reject"  onclick="sendAction(${b.id},'reject')">✗</button>`  : ''}
+      </td>`;
+    tbody.appendChild(tr);
+  });
+
+  // Update map markers
+  updateMapMarkers(breakers);
+}
+
+async function sendAction(id, action) {
+  try {
+    await fetch(`${API}/action`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ breaker_id: id, action }),
+    });
+    await refreshBreakers();
+  } catch(e) { console.error('action error', e); }
+}
+
+// ── Map marker management ────────────────────────────────────
+function updateMapMarkers(breakers) {
+  const seen = new Set();
+
+  breakers.forEach(b => {
+    seen.add(b.id);
+    const existing = breakerMarkers[b.id];
+    const latlng   = [b.latitude, b.longitude];
+
+    const isConfirmed  = b.status === 'confirmed';
+    const isCandidate  = b.status === 'candidate';
+    const pulsingClass = (currentFeedbackId === b.id) ? ' pulsing' : '';
+    const iconClass    = isConfirmed ? 'confirmed-icon' : `candidate-icon${pulsingClass}`;
+    const iconColor    = isConfirmed ? '#22c55e' : '#f5a623';
+    const iconHtml     = `<div class="${iconClass}" style="width:24px;height:24px;border-radius:4px;background:${iconColor};border:2px solid #fff;display:flex;align-items:center;justify-content:center;font-size:10px;">${isConfirmed ? '✓' : '?'}</div>`;
+    const icon = makeIcon(iconHtml, [24, 24]);
+
+    const popupHtml = `
+      <div class="popup-title">${isConfirmed ? '✅ CONFIRMED' : '⚠ CANDIDATE'} #${b.id}</div>
+      <div class="popup-row">Lat: ${b.latitude.toFixed(6)}</div>
+      <div class="popup-row">Lon: ${b.longitude.toFixed(6)}</div>
+      <div class="popup-row">Confidence: ${(b.confidence * 100).toFixed(0)}%</div>
+      <div class="popup-row">Detections: ${b.detection_count}</div>`;
+
+    if (existing) {
+      existing.setLatLng(latlng).setIcon(icon);
+      existing.getPopup().setContent(popupHtml);
+    } else {
+      const m = L.marker(latlng, { icon }).addTo(map);
+      m.bindPopup(popupHtml, { className: '' });
+      breakerMarkers[b.id] = m;
+    }
+
+    // Scan radius circle for candidates
+    if (isCandidate) {
+      if (!scanCircles[b.id]) {
+        scanCircles[b.id] = L.circle(latlng, {
+          radius: 150, color: '#f5a623', fillColor: '#f5a623',
+          fillOpacity: 0.06, weight: 1, dashArray: '5,5',
+        }).addTo(map);
+      }
+    } else {
+      if (scanCircles[b.id]) {
+        map.removeLayer(scanCircles[b.id]);
+        delete scanCircles[b.id];
+      }
+    }
+
+    // Alert radius circle for confirmed
+    if (isConfirmed && !breakerMarkers[`alert_${b.id}`]) {
+      const c = L.circle(latlng, {
+        radius: 100, color: '#22c55e', fillColor: '#22c55e',
+        fillOpacity: 0.04, weight: 1, dashArray: '4,4',
+      }).addTo(map);
+      breakerMarkers[`alert_${b.id}`] = c;
+    }
+  });
+
+  // Remove stale markers
+  Object.keys(breakerMarkers).forEach(key => {
+    const id = parseInt(key.replace('alert_', ''));
+    if (!seen.has(id)) {
+      map.removeLayer(breakerMarkers[key]);
+      delete breakerMarkers[key];
+    }
+  });
+}
+
+// ── Vehicle marker ───────────────────────────────────────────
+function updateVehicle(lat, lon, speed) {
+  const latlng = [lat, lon];
+  const color = speed > 60 ? '#3b82f6' : speed > 40 ? '#f5a623' : '#ef4444';
+  const iconHtml = `<div style="width:28px;height:28px;border-radius:50%;background:${color};border:2.5px solid #fff;display:flex;align-items:center;justify-content:center;font-size:14px;box-shadow:0 0 0 4px ${color}44">🚗</div>`;
+
+  if (vehicleMarker) {
+    vehicleMarker.setLatLng(latlng).setIcon(makeIcon(iconHtml, [28, 28]));
+  } else {
+    vehicleMarker = L.marker(latlng, { icon: makeIcon(iconHtml, [28, 28]), zIndexOffset: 1000 }).addTo(map);
+    vehicleMarker.bindTooltip('Vehicle', { permanent: false });
+  }
+
+  // Trail
+  routePath.push(latlng);
+  if (routePath.length > 80) routePath.shift();
+  if (routePolyline) {
+    routePolyline.setLatLngs(routePath);
+  } else {
+    routePolyline = L.polyline(routePath, {
+      color: '#3b82f6', weight: 2, opacity: 0.5, dashArray: '4,4',
+    }).addTo(map);
+  }
+}
+
+// ── Nearest breaker distance ─────────────────────────────────
+function haversine(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const f1 = lat1 * Math.PI / 180, f2 = lat2 * Math.PI / 180;
+  const df = (lat2 - lat1) * Math.PI / 180;
+  const dl = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(df/2)**2 + Math.cos(f1)*Math.cos(f2)*Math.sin(dl/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// ── Event log ─────────────────────────────────────────────────
+let lastLogLen = 0;
+function renderLog(events) {
+  if (!events || events.length === lastLogLen) return;
+  lastLogLen = events.length;
+  const container = document.getElementById('event-log');
+  container.innerHTML = events.map(e =>
+    `<div class="log-item"><span class="log-time">${e.t}</span><span class="log-msg">${e.msg}</span></div>`
+  ).join('');
+}
+
+// ── Main data poll ────────────────────────────────────────────
+async function refreshData() {
+  try {
+    const res  = await fetch(`${API}/data`);
+    const data = await res.json();
+    console.log("LIVE DATA:", data);
+    lastData = data;
+
+    const { lat, lon, speed, max_speed, camera_on, alert, pending_feedback, event_log } = data;
+
+    // Stats
+    document.getElementById('sv-speed').innerHTML = `${speed}<span class="stat-unit">km/h</span>`;
+    document.getElementById('sv-pos').textContent = `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+    document.getElementById('sv-max').innerHTML   = `${max_speed}<span class="stat-unit">km/h</span>`;
+    document.getElementById('gauge-val').textContent = speed;
+
+    // Speed color
+    const speedStat = document.getElementById('stat-speed');
+    speedStat.className = 'stat' + (speed > 60 ? '' : speed < 20 ? ' danger' : ' ok');
+
+    // Drop indicator
+    const dropEl = document.getElementById('gauge-drop');
+    if (max_speed - speed >= 25 && max_speed >= 60) {
+      dropEl.style.display = 'block';
+    } else {
+      dropEl.style.display = 'none';
+    }
+
+    // Nearest breaker
+    const bres = await fetch(`${API}/breakers`);
+    const breakers = await bres.json();
+
+    let nearestDist = Infinity;
+    breakers.filter(b => b.status !== 'rejected').forEach(b => {
+      const d = haversine(lat, lon, b.latitude, b.longitude);
+      if (d < nearestDist) nearestDist = d;
+    });
+
+    const distEl = document.getElementById('sv-dist');
+    if (nearestDist < Infinity) {
+      distEl.innerHTML = `${Math.round(nearestDist)}<span class="stat-unit">m</span>`;
+      const distStat = document.getElementById('stat-dist');
+      distStat.className = 'stat' + (nearestDist < 100 ? ' danger' : nearestDist < 300 ? ' ok' : '');
+    } else {
+      distEl.innerHTML = `—`;
+    }
+
+    // Alert overlay
+    const alertOverlay = document.getElementById('alert-overlay');
+    const alertBadge   = document.getElementById('alert-badge');
+    if (alert) {
+      alertOverlay.classList.add('visible');
+      alertOverlay.textContent = `🚨 SPEED BREAKER #${alert.breaker_id} — ${Math.round(alert.distance)}m`;
+      alertBadge.style.display = 'inline-block';
+      alertBadge.className = 'badge alert';
+    } else {
+      alertOverlay.classList.remove('visible');
+      alertBadge.style.display = 'none';
+    }
+
+    // Camera indicator
+    const camEl = document.getElementById('camera-indicator');
+    camEl.className = camera_on ? 'on' : '';
+
+    // Feedback
+    if (pending_feedback && !currentFeedbackId) {
+      showFeedback(pending_feedback);
+    } else if (!pending_feedback) {
+      hideFeedback();
+    }
+
+    // Map
+    updateVehicle(lat, lon, speed);
+    renderBreakers(breakers);
+    renderLog(event_log);
+
+  } catch(e) {
+   console.warn('API unreachable', e);
+  document.getElementById('mode-badge').textContent = 'BACKEND OFFLINE';
+  }
+}
+
+// ── Demo/offline simulation ───────────────────────────────────
+const demoPATH = [
+  [28.6090, 77.2130, 65],[28.6100, 77.2120, 67],[28.6110, 77.2110, 68],
+  [28.6120, 77.2105, 70],[28.6130, 77.2095, 70],[28.6140, 77.2085, 69],
+  [28.6150, 77.2078, 66],[28.6157, 77.2073, 63],[28.6163, 77.2068, 58],
+  [28.6165, 77.2065, 35],[28.6168, 77.2062, 40],[28.6172, 77.2058, 50],
+  [28.6177, 77.2053, 58],[28.6183, 77.2047, 65],[28.6190, 77.2040, 68],
+  [28.6197, 77.2033, 70],[28.6205, 77.2025, 69],[28.6213, 77.2018, 66],
+  [28.6220, 77.2014, 62],[28.6225, 77.2012, 52],[28.6230, 77.2010, 40],
+  [28.6233, 77.2009, 38],[28.6235, 77.2008, 42],[28.6238, 77.2006, 50],
+  [28.6242, 77.2003, 60],[28.6246, 77.2000, 68],[28.6248, 77.1998, 70],
+];
+const demoBreakers = [
+  { id:1, latitude:28.6165, longitude:77.2065, confidence:1.0, status:'confirmed', detection_count:5 },
+];
+let demoIdx = 0;
+let demoDir = 1;
+let demoCandidate = null;
+let demoEvents = [];
+let demoPendingFeedback = null;
+let demoFeedbackShown = false;
+
+function pushDemoEvent(msg) {
+  demoEvents.unshift({ t: new Date().toTimeString().slice(0,8), msg });
+  if (demoEvents.length > 20) demoEvents.pop();
+}
+
+function simulateDemo() {
+  const [lat, lon, spd] = demoPATH[demoIdx];
+  demoIdx += demoDir;
+  if (demoIdx >= demoPATH.length) { demoDir = -1; demoIdx = demoPATH.length - 2; }
+  if (demoIdx < 0) { demoDir = 1; demoIdx = 1; }
+
+  document.getElementById('sv-speed').innerHTML = `${spd}<span class="stat-unit">km/h</span>`;
+  document.getElementById('sv-pos').textContent = `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+  document.getElementById('sv-max').innerHTML   = `${Math.min(70, spd + 5)}<span class="stat-unit">km/h</span>`;
+  document.getElementById('gauge-val').textContent = spd;
+
+  const allBreakers = demoCandidate ? [...demoBreakers, demoCandidate] : demoBreakers;
+
+  // Near confirmed breaker?
+  const d1 = haversine(lat, lon, 28.6165, 77.2065);
+  const alertEl = document.getElementById('alert-overlay');
+  const badgeEl = document.getElementById('alert-badge');
+  if (d1 < 100) {
+    alertEl.classList.add('visible');
+    alertEl.textContent = `🚨 SPEED BREAKER #1 — ${Math.round(d1)}m`;
+    badgeEl.style.display = 'inline-block';
+    badgeEl.className = 'badge alert';
+    if (!demoEvents.find(e => e.msg.includes('ALERT #1'))) {
+      pushDemoEvent(`🚨 ALERT: confirmed breaker #1 at ${Math.round(d1)}m`);
+    }
+  } else {
+    alertEl.classList.remove('visible');
+    badgeEl.style.display = 'none';
+  }
+
+  // Speed drop at XYZ?
+  if (spd <= 42 && lat > 28.622 && !demoCandidate) {
+    demoCandidate = {
+      id:2, latitude:lat, longitude:lon,
+      confidence:0.25, status:'candidate', detection_count:1,
+    };
+    pushDemoEvent(`⚡ Speed drop detected — weak candidate #2 saved`);
+    if (!demoFeedbackShown) {
+      demoPendingFeedback = { breaker_id:2, lat, lon, conf:0.25, status:'candidate' };
+      demoFeedbackShown = true;
+    }
+  }
+
+  // Camera scan near candidate?
+  if (demoCandidate) {
+    const d2 = haversine(lat, lon, demoCandidate.latitude, demoCandidate.longitude);
+    const camEl = document.getElementById('camera-indicator');
+    if (d2 < 150) {
+      camEl.className = 'on';
+      if (!demoEvents.find(e => e.msg.includes('Camera scan'))) {
+        pushDemoEvent(`📷 Camera scan → candidate #2 (${Math.round(d2)}m)`);
+      }
+      if (!demoPendingFeedback && !currentFeedbackId) {
+        demoPendingFeedback = {
+          breaker_id:2, lat:demoCandidate.latitude,
+          lon:demoCandidate.longitude, conf:demoCandidate.confidence, status:'candidate',
+        };
+      }
+    } else if (d2 > 300) {
+      camEl.className = '';
+    }
+
+    let nd = Infinity;
+    allBreakers.filter(b => b.status !== 'rejected').forEach(b => {
+      nd = Math.min(nd, haversine(lat, lon, b.latitude, b.longitude));
+    });
+    document.getElementById('sv-dist').innerHTML = nd < Infinity
+      ? `${Math.round(nd)}<span class="stat-unit">m</span>` : '—';
+  }
+
+  // Show feedback
+  if (demoPendingFeedback && !currentFeedbackId) {
+    showFeedback(demoPendingFeedback);
+    document.getElementById('fb-yes').onclick = () => {
+      if (demoCandidate) {
+        demoCandidate.confidence = Math.min(1.0, demoCandidate.confidence + 0.40);
+        if (demoCandidate.confidence >= 0.8) {
+          demoCandidate.status = 'confirmed';
+          pushDemoEvent(`✅ Candidate #2 CONFIRMED by user`);
+        }
+      }
+      demoPendingFeedback = null;
+      hideFeedback();
+    };
+    document.getElementById('fb-no').onclick = () => {
+      if (demoCandidate) {
+        demoCandidate.confidence = Math.max(0.0, demoCandidate.confidence - 0.40);
+        if (demoCandidate.confidence <= 0.1) {
+          demoCandidate.status = 'rejected';
+          pushDemoEvent(`❌ Candidate #2 rejected`);
+        }
+      }
+      demoPendingFeedback = null;
+      hideFeedback();
+    };
+  }
+
+  updateVehicle(lat, lon, spd);
+  renderBreakers(demoCandidate ? [...demoBreakers, demoCandidate] : demoBreakers);
+  renderLog(demoEvents);
+}
+
+// ── DB reset ──────────────────────────────────────────────────
+async function resetDB() {
+  try {
+    await fetch(`${API}/reset`, { method: 'POST' });
+    alert('Database reset and re-seeded.');
+    lastBreakersHash = '';
+  } catch(e) {
+    alert('Backend offline — resetting demo state.');
+    demoCandidate    = null;
+    demoFeedbackShown= false;
+    demoPendingFeedback = null;
+    demoEvents       = [];
+    lastBreakersHash = '';
+    hideFeedback();
+  }
+}
+
+// ── Clock ─────────────────────────────────────────────────────
+function updateClock() {
+  document.getElementById('clock').textContent = new Date().toTimeString().slice(0,8);
+}
+
+// ── Map initial view + seed breaker preview ────────────────────
+setTimeout(() => {
+  const iconHtml = `<div style="width:24px;height:24px;border-radius:4px;background:#22c55e;border:2px solid #fff;display:flex;align-items:center;justify-content:center;font-size:11px;">✓</div>`;
+  const m = L.marker([28.6165, 77.2065], { icon: makeIcon(iconHtml, [24,24]) }).addTo(map);
+  m.bindPopup(`<div class="popup-title">✅ CONFIRMED #1</div><div class="popup-row">Pre-loaded demo breaker</div><div class="popup-row">Lat: 28.616500</div><div class="popup-row">Lon: 77.206500</div><div class="popup-row">Confidence: 100%</div>`);
+  breakerMarkers[1] = m;
+
+  L.circle([28.6165, 77.2065], {
+    radius:100, color:'#22c55e', fillColor:'#22c55e',
+    fillOpacity:0.05, weight:1, dashArray:'4,4',
+  }).addTo(map);
+  breakerMarkers['alert_1'] = true;
+}, 300);
+
+// ── Kick off ──────────────────────────────────────────────────
+setInterval(updateClock, 1000);
+updateClock();
+setInterval(refreshData, 1200);
+refreshData();
+
+</script>
+</body>
+</html>

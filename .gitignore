@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual env
+.venv/
+env/
+
+# Dataset & training
+dataset/
+datasets/
+runs/
+logs/
+
+# Models
+*.pt
+*.pth
+
+# System
+.DS_Store
+Thumbs.db
+.venv/
+__pycache__/
+*.pyc
+runs/
+dataset/
+datasets/
+combined_dataset/
+models/
+*.pt
+*.pth
+speed_breakers.db
